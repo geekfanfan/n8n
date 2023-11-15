@@ -123,6 +123,47 @@ export class ActiveWorkflowRunner implements IWebhookManager {
 		await this.externalHooks.run('activeWorkflows.initialized', []);
 	}
 
+	async initWebhooks() {
+		const webhooks = await this.webhookService.findAll();
+		for (const webhook of webhooks) {
+			const { workflowId } = webhook;
+			try {
+				const dbWorkflow = await this.workflowRepository.findById(workflowId);
+				if (!dbWorkflow) {
+					throw new WorkflowActivationError(`Failed to find workflow with ID "${workflowId}"`);
+				}
+				const workflow = new Workflow({
+					id: dbWorkflow.id,
+					name: dbWorkflow.name,
+					nodes: dbWorkflow.nodes,
+					connections: dbWorkflow.connections,
+					active: dbWorkflow.active,
+					nodeTypes: this.nodeTypes,
+					staticData: dbWorkflow.staticData,
+					settings: dbWorkflow.settings,
+				});
+
+				const canBeActivated = workflow.checkIfWorkflowCanBeActivated(STARTING_NODES);
+				if (!canBeActivated) {
+					throw new WorkflowActivationError(
+						`Workflow ${dbWorkflow.display()} has no node to start the workflow - at least one trigger, poller or webhook node is required`,
+					);
+				}
+
+				const sharing = dbWorkflow.shared.find((shared) => shared.role.name === 'owner');
+				if (!sharing) {
+					throw new WorkflowActivationError(`Workflow ${dbWorkflow.display()} has no owner`);
+				}
+
+				const additionalData = await WorkflowExecuteAdditionalData.getBase(sharing.user.id);
+				await this.addWebhooks(workflow, additionalData, 'trigger', 'init');
+				this.webhookWorkflows.set(dbWorkflow.id, dbWorkflow);
+			} catch (error) {
+				this.logger.error('Failed to activate workflow', { workflowId });
+			}
+		}
+	}
+
 	/**
 	 * Removes all the currently active workflows from memory.
 	 */
@@ -757,8 +798,8 @@ export class ActiveWorkflowRunner implements IWebhookManager {
 				this.logger.debug(`Adding webhooks for workflow "${dbWorkflow.display()}"`);
 				this.logger.debug('============');
 
-				this.webhookWorkflows.set(dbWorkflow.id, dbWorkflow);
 				await this.addWebhooks(workflow, additionalData, 'trigger', activationMode);
+				this.webhookWorkflows.set(dbWorkflow.id, dbWorkflow);
 			}
 
 			if (shouldAddTriggersAndPollers) {
