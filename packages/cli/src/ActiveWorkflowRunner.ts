@@ -70,6 +70,8 @@ const WEBHOOK_PROD_UNREGISTERED_HINT =
 
 @Service()
 export class ActiveWorkflowRunner implements IWebhookManager {
+	private webhookWorkflows = new Map<string, WorkflowEntity>();
+
 	activeWorkflows = new ActiveWorkflows();
 
 	private activationErrors: {
@@ -172,6 +174,12 @@ export class ActiveWorkflowRunner implements IWebhookManager {
 			);
 		}
 
+		const workflowId = webhook.workflow.id;
+		const workflowData = this.webhookWorkflows.get(workflowId);
+		if (!workflowData) {
+			throw new ResponseHelper.NotFoundError(`Could not find workflow with id "${workflowId}"`);
+		}
+
 		if (webhook.isDynamic) {
 			const pathElements = path.split('/').slice(1);
 
@@ -184,17 +192,6 @@ export class ActiveWorkflowRunner implements IWebhookManager {
 					request.params[ele.slice(1)] = pathElements[index];
 				}
 			});
-		}
-
-		const workflowData = await this.workflowRepository.findOne({
-			where: { id: webhook.workflow.id },
-			relations: ['shared', 'shared.user', 'shared.user.globalRole'],
-		});
-
-		if (workflowData === null) {
-			throw new ResponseHelper.NotFoundError(
-				`Could not find workflow with id "${webhook.workflow.id}"`,
-			);
 		}
 
 		return new Promise((resolve, reject) => {
@@ -377,6 +374,8 @@ export class ActiveWorkflowRunner implements IWebhookManager {
 	 * Clear workflow-defined webhooks from the `webhook_entity` table.
 	 */
 	async clearWebhooks(workflowId: string) {
+		this.webhookWorkflows.delete(workflowId);
+
 		const workflowData = await this.workflowRepository.findOne({
 			where: { id: workflowId },
 			relations: ['shared', 'shared.user', 'shared.user.globalRole'],
@@ -758,6 +757,7 @@ export class ActiveWorkflowRunner implements IWebhookManager {
 				this.logger.debug(`Adding webhooks for workflow "${dbWorkflow.display()}"`);
 				this.logger.debug('============');
 
+				this.webhookWorkflows.set(dbWorkflow.id, dbWorkflow);
 				await this.addWebhooks(workflow, additionalData, 'trigger', activationMode);
 			}
 
