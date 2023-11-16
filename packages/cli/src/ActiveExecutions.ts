@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-unnecessary-type-assertion */
-
+import EventEmitter from 'events';
 import { Container, Service } from 'typedi';
 import type {
 	IDeferredPromise,
@@ -127,6 +127,8 @@ export class ActiveExecutions {
 			);
 		}
 
+		// Let as many nodes listen to the abort signal, without getting the MaxListenersExceededWarning
+		(abortController.signal as unknown as EventEmitter).setMaxListeners(Infinity);
 		execution.abortController = abortController;
 	}
 
